@@ -21,6 +21,13 @@ const AIRTABLE_BASE = "appClMfjTrAEOKxdi";
 const USERS_TABLE = "tbl7F2aJ0hB8d2jFX";
 const HISTORY_TABLE = "tbl6SeMliXAUlC9ca";
 
+const FREQUENCY_OPTIONS = [
+  { value: "Daily",   label: "Daily",          desc: "Every morning" },
+  { value: "Weekly",  label: "Weekly",         desc: "Every Monday morning" },
+  { value: "Monthly", label: "Monthly",        desc: "1st of each month" },
+  { value: "Never",   label: "Paused",         desc: "No emails for now" },
+];
+
 const airtableFetch = async (url, options = {}) => {
   const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${url}`, {
     ...options,
@@ -40,12 +47,12 @@ export default function App() {
   const [airtableRecord, setAirtableRecord] = useState(null);
   const [philosophy, setPhilosophy] = useState("");
   const [tickers, setTickers] = useState("");
+  const [frequency, setFrequency] = useState("Daily");
   const [briefings, setBriefings] = useState([]);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState("profile");
 
-  // Auth state listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -67,8 +74,8 @@ export default function App() {
       setAirtableRecord(record);
       setPhilosophy(record.fields.Philosophy || "");
       setTickers(record.fields.Tickers || "");
+      setFrequency(record.fields.Frequency || "Daily");
     } else {
-      // Create new user record
       const newRecord = await airtableFetch(USERS_TABLE, {
         method: "POST",
         body: JSON.stringify({
@@ -78,6 +85,7 @@ export default function App() {
               Email: email,
               Philosophy: "",
               Tickers: "",
+              Frequency: "Daily",
               Active: true,
             },
           }],
@@ -85,6 +93,7 @@ export default function App() {
       });
       if (newRecord.records) {
         setAirtableRecord(newRecord.records[0]);
+        setFrequency("Daily");
       }
     }
   };
@@ -107,6 +116,7 @@ export default function App() {
         fields: {
           Philosophy: philosophy,
           Tickers: tickers,
+          Frequency: frequency,
         },
       }),
     });
@@ -128,6 +138,7 @@ export default function App() {
     setAirtableRecord(null);
     setPhilosophy("");
     setTickers("");
+    setFrequency("Daily");
     setBriefings([]);
   };
 
@@ -155,7 +166,6 @@ export default function App() {
 
   return (
     <div style={styles.app}>
-      {/* Header */}
       <header style={styles.header}>
         <span style={styles.logo}>📈 Finance Agent</span>
         <div style={styles.userInfo}>
@@ -165,7 +175,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Tabs */}
       <div style={styles.tabs}>
         <button style={tab === "profile" ? styles.tabActive : styles.tab} onClick={() => setTab("profile")}>
           My Profile
@@ -175,14 +184,27 @@ export default function App() {
         </button>
       </div>
 
-      {/* Content */}
       <main style={styles.main}>
         {tab === "profile" && (
           <div style={styles.card}>
             <h2 style={styles.sectionTitle}>My Investment Profile</h2>
             <p style={styles.hint}>
-              Your briefing is generated each morning based on this profile. Update it anytime — changes take effect the next morning.
+              Your briefing is generated based on this profile. Update it anytime — changes take effect on the next send.
             </p>
+
+            <label style={styles.label}>Briefing Frequency</label>
+            <div style={styles.frequencyGrid}>
+              {FREQUENCY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  style={frequency === opt.value ? styles.freqBtnActive : styles.freqBtn}
+                  onClick={() => setFrequency(opt.value)}
+                >
+                  <span style={styles.freqLabel}>{opt.label}</span>
+                  <span style={styles.freqDesc}>{opt.desc}</span>
+                </button>
+              ))}
+            </div>
 
             <label style={styles.label}>Investment Philosophy</label>
             <textarea
@@ -216,7 +238,7 @@ export default function App() {
           <div style={styles.card}>
             <h2 style={styles.sectionTitle}>Past Briefings</h2>
             {briefings.length === 0 ? (
-              <p style={styles.hint}>No briefings yet. Your first one arrives tomorrow morning.</p>
+              <p style={styles.hint}>No briefings yet. Your first one arrives on your next scheduled send.</p>
             ) : (
               briefings.map((b, i) => (
                 <div key={i} style={styles.briefingItem}>
@@ -263,8 +285,13 @@ const styles = {
   main: { maxWidth: 720, margin: "32px auto", padding: "0 24px" },
   card: { background: "#fff", borderRadius: 16, padding: 32, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" },
   sectionTitle: { fontSize: 20, fontWeight: 700, color: "#1d1d1f", margin: "0 0 8px" },
-  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 6px" },
+  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 8px" },
   hint: { fontSize: 13, color: "#6e6e73", margin: "4px 0 0" },
+  frequencyGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 },
+  freqBtn: { display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 8px", border: "1.5px solid #d2d2d7", borderRadius: 10, background: "#fff", cursor: "pointer", gap: 4 },
+  freqBtnActive: { display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 8px", border: "1.5px solid #0066cc", borderRadius: 10, background: "#f0f6ff", cursor: "pointer", gap: 4 },
+  freqLabel: { fontSize: 14, fontWeight: 600, color: "#1d1d1f" },
+  freqDesc: { fontSize: 11, color: "#6e6e73", textAlign: "center" },
   textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
