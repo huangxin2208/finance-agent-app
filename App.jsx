@@ -16,7 +16,7 @@ const auth = getAuth(firebaseApp);
 const provider = new GoogleAuthProvider();
 
 // ─── Airtable Config ───────────────────────────────────────────────────────────
-const AIRTABLE_TOKEN = "YOUR_AIRTABLE_TOKEN";
+const AIRTABLE_TOKEN = import.meta.env.VITE_AIRTABLE_TOKEN;
 const AIRTABLE_BASE = "appClMfjTrAEOKxdi";
 const USERS_TABLE = "tbl7F2aJ0hB8d2jFX";
 const HISTORY_TABLE = "tbl6SeMliXAUlC9ca";
