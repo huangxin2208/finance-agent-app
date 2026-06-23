@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
 
-// ─── Firebase Config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyBFchmw6b2Q7-qygQaezGBEqKJbKxPC76c",
   authDomain: "finance-agent-ae585.firebaseapp.com",
@@ -15,17 +14,16 @@ const firebaseApp = initializeApp(firebaseConfig);
 const auth = getAuth(firebaseApp);
 const provider = new GoogleAuthProvider();
 
-// ─── Airtable Config ───────────────────────────────────────────────────────────
 const AIRTABLE_TOKEN = import.meta.env.VITE_AIRTABLE_TOKEN;
 const AIRTABLE_BASE = "appClMfjTrAEOKxdi";
 const USERS_TABLE = "tbl7F2aJ0hB8d2jFX";
 const HISTORY_TABLE = "tbl6SeMliXAUlC9ca";
 
 const FREQUENCY_OPTIONS = [
-  { value: "Daily",   label: "Daily",          desc: "Every morning" },
-  { value: "Weekly",  label: "Weekly",         desc: "Every Monday morning" },
-  { value: "Monthly", label: "Monthly",        desc: "1st of each month" },
-  { value: "Never",   label: "Paused",         desc: "No emails for now" },
+  { value: "Daily",   label: "Daily",   desc: "Every morning" },
+  { value: "Weekly",  label: "Weekly",  desc: "Every Monday" },
+  { value: "Monthly", label: "Monthly", desc: "1st of month" },
+  { value: "Never",   label: "Paused",  desc: "No emails" },
 ];
 
 const airtableFetch = async (url, options = {}) => {
@@ -40,7 +38,6 @@ const airtableFetch = async (url, options = {}) => {
   return res.json();
 };
 
-// ─── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -113,11 +110,7 @@ export default function App() {
     await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
       method: "PATCH",
       body: JSON.stringify({
-        fields: {
-          Philosophy: philosophy,
-          Tickers: tickers,
-          Frequency: frequency,
-        },
+        fields: { Philosophy: philosophy, Tickers: tickers },
       }),
     });
     setSaving(false);
@@ -125,12 +118,17 @@ export default function App() {
     setTimeout(() => setSaved(false), 3000);
   };
 
+  const handleFrequencyChange = async (newFreq) => {
+    if (!airtableRecord) return;
+    setFrequency(newFreq);
+    await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fields: { Frequency: newFreq } }),
+    });
+  };
+
   const handleLogin = async () => {
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (e) {
-      console.error(e);
-    }
+    try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
   };
 
   const handleLogout = async () => {
@@ -142,13 +140,7 @@ export default function App() {
     setBriefings([]);
   };
 
-  if (loading) {
-    return (
-      <div style={styles.centered}>
-        <div style={styles.spinner} />
-      </div>
-    );
-  }
+  if (loading) return <div style={styles.centered}><div style={styles.spinner} /></div>;
 
   if (!user) {
     return (
@@ -176,42 +168,22 @@ export default function App() {
       </header>
 
       <div style={styles.tabs}>
-        <button style={tab === "profile" ? styles.tabActive : styles.tab} onClick={() => setTab("profile")}>
-          My Profile
-        </button>
-        <button style={tab === "briefings" ? styles.tabActive : styles.tab} onClick={() => setTab("briefings")}>
-          Past Briefings
-        </button>
+        <button style={tab === "profile" ? styles.tabActive : styles.tab} onClick={() => setTab("profile")}>My Profile</button>
+        <button style={tab === "briefings" ? styles.tabActive : styles.tab} onClick={() => setTab("briefings")}>Past Briefings</button>
       </div>
 
       <main style={styles.main}>
         {tab === "profile" && (
           <div style={styles.card}>
             <h2 style={styles.sectionTitle}>My Investment Profile</h2>
-            <p style={styles.hint}>
-              Your briefing is generated based on this profile. Update it anytime — changes take effect on the next send.
-            </p>
-
-            <label style={styles.label}>Briefing Frequency</label>
-            <div style={styles.frequencyGrid}>
-              {FREQUENCY_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value}
-                  style={frequency === opt.value ? styles.freqBtnActive : styles.freqBtn}
-                  onClick={() => setFrequency(opt.value)}
-                >
-                  <span style={styles.freqLabel}>{opt.label}</span>
-                  <span style={styles.freqDesc}>{opt.desc}</span>
-                </button>
-              ))}
-            </div>
+            <p style={styles.hint}>Your briefing is generated based on this profile. Changes take effect on the next send.</p>
 
             <label style={styles.label}>Investment Philosophy</label>
             <textarea
               style={styles.textarea}
               value={philosophy}
               onChange={(e) => setPhilosophy(e.target.value)}
-              placeholder="Describe how you invest. e.g. I am a long-term value investor. I hold positions for 3-10 years. I only want to be alerted when there is a fundamental change to a company's business, management, or valuation."
+              placeholder="Describe how you invest..."
               rows={6}
             />
 
@@ -231,6 +203,22 @@ export default function App() {
             >
               {saving ? "Saving..." : saved ? "✓ Saved" : "Save Changes"}
             </button>
+
+            <hr style={styles.divider} />
+
+            <label style={styles.label}>Briefing Frequency</label>
+            <div style={styles.frequencyGrid}>
+              {FREQUENCY_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  style={frequency === opt.value ? styles.freqBtnActive : styles.freqBtn}
+                  onClick={() => handleFrequencyChange(opt.value)}
+                >
+                  <span style={styles.freqLabel}>{opt.label}</span>
+                  <span style={styles.freqDesc}>{opt.desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
@@ -254,7 +242,6 @@ export default function App() {
   );
 }
 
-// ─── Google Icon SVG ───────────────────────────────────────────────────────────
 function GoogleIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 18 18" style={{ marginRight: 10 }}>
@@ -266,7 +253,6 @@ function GoogleIcon() {
   );
 }
 
-// ─── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
   app: { minHeight: "100vh", background: "#f5f5f7", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
   centered: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f5f5f7" },
@@ -279,23 +265,24 @@ const styles = {
   avatar: { width: 32, height: 32, borderRadius: "50%" },
   userName: { fontSize: 14, color: "#1d1d1f", fontWeight: 500 },
   logoutBtn: { fontSize: 13, color: "#0066cc", background: "none", border: "none", cursor: "pointer", padding: "4px 8px" },
-  tabs: { display: "flex", gap: 0, background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "0 24px" },
+  tabs: { display: "flex", background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "0 24px" },
   tab: { padding: "14px 20px", border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#6e6e73", fontWeight: 500, borderBottom: "2px solid transparent" },
   tabActive: { padding: "14px 20px", border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#0066cc", fontWeight: 600, borderBottom: "2px solid #0066cc" },
   main: { maxWidth: 720, margin: "32px auto", padding: "0 24px" },
   card: { background: "#fff", borderRadius: 16, padding: 32, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" },
   sectionTitle: { fontSize: 20, fontWeight: 700, color: "#1d1d1f", margin: "0 0 8px" },
-  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 8px" },
+  label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 6px" },
   hint: { fontSize: 13, color: "#6e6e73", margin: "4px 0 0" },
+  textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
+  input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
+  saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
+  saveBtnDisabled: { marginTop: 24, padding: "12px 28px", background: "#a0b4c8", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "not-allowed" },
+  divider: { border: "none", borderTop: "1px solid #f0f0f0", margin: "28px 0" },
   frequencyGrid: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 },
   freqBtn: { display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 8px", border: "1.5px solid #d2d2d7", borderRadius: 10, background: "#fff", cursor: "pointer", gap: 4 },
   freqBtnActive: { display: "flex", flexDirection: "column", alignItems: "center", padding: "12px 8px", border: "1.5px solid #0066cc", borderRadius: 10, background: "#f0f6ff", cursor: "pointer", gap: 4 },
   freqLabel: { fontSize: 14, fontWeight: 600, color: "#1d1d1f" },
   freqDesc: { fontSize: 11, color: "#6e6e73", textAlign: "center" },
-  textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
-  input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
-  saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
-  saveBtnDisabled: { marginTop: 24, padding: "12px 28px", background: "#a0b4c8", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "not-allowed" },
   briefingItem: { borderBottom: "1px solid #f0f0f0", padding: "20px 0" },
   briefingDate: { fontSize: 12, fontWeight: 600, color: "#6e6e73", marginBottom: 8 },
   briefingText: { fontSize: 14, lineHeight: 1.7, color: "#1d1d1f" },
