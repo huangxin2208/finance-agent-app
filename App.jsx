@@ -49,6 +49,9 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState("profile");
+  const [tickerError, setTickerError] = useState("");
+
+  const MAX_TICKERS = 5;
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -106,6 +109,12 @@ export default function App() {
 
   const handleSave = async () => {
     if (!airtableRecord) return;
+    const tickerCount = tickers.split(",").map((t) => t.trim()).filter(Boolean).length;
+    if (tickerCount > MAX_TICKERS) {
+      setTickerError(`Max ${MAX_TICKERS} tickers allowed (you entered ${tickerCount}).`);
+      return;
+    }
+    setTickerError("");
     setSaving(true);
     await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
       method: "PATCH",
@@ -191,10 +200,14 @@ export default function App() {
             <input
               style={styles.input}
               value={tickers}
-              onChange={(e) => setTickers(e.target.value)}
+              onChange={(e) => {
+                setTickers(e.target.value);
+                if (tickerError) setTickerError("");
+              }}
               placeholder="BRK.B, JPM, JNJ, GOOGL, KO"
             />
-            <p style={styles.hint}>Comma-separated. e.g. AAPL, MSFT, TSLA</p>
+            <p style={styles.hint}>Comma-separated. Max {MAX_TICKERS} tickers. e.g. AAPL, MSFT, TSLA</p>
+            {tickerError && <p style={styles.errorHint}>{tickerError}</p>}
 
             <button
               style={saving ? styles.saveBtnDisabled : styles.saveBtn}
@@ -273,6 +286,7 @@ const styles = {
   sectionTitle: { fontSize: 20, fontWeight: 700, color: "#1d1d1f", margin: "0 0 8px" },
   label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 6px" },
   hint: { fontSize: 13, color: "#6e6e73", margin: "4px 0 0" },
+  errorHint: { fontSize: 13, color: "#d70015", margin: "6px 0 0", fontWeight: 500 },
   textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
