@@ -77,79 +77,167 @@ const getTimeZoneOptions = () => {
 
 const TIME_ZONE_OPTIONS = getTimeZoneOptions();
 
-// Well-known zones preferred as the representative VALUE for their offset
-// group, in priority order - so a group stores e.g. a real "America/New_York"
-// rather than some obscure linked zone. Never an "Etc/" zone - those exist in
-// the IANA db but aren't real, user-recognizable places. Includes the common
-// half/quarter-hour zones too, matching Windows' standard timezone list.
+// Well-known zones preferred as candidates for an offset group's displayed
+// cities and representative VALUE - ordered most-to-least recognizable within
+// each region, since the picker takes the first 3 distinct-country matches.
+// Tagged with country so a single group never shows two from the same
+// country - and so genuinely single-timezone countries (Japan, Thailand,
+// China - Hong Kong included, since it's the same clock time) show the
+// country name rather than a city. Never an "Etc/" zone. Deliberately
+// excludes very obscure places (e.g. Eucla, Lord Howe, Chatham, Niue) in
+// favor of fewer, more recognizable entries - some sparse offsets will show
+// fewer than 3 because there simply isn't a third well-known option there.
 const MAJOR_ZONES = [
-  "UTC",
-  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Anchorage",
-  "America/Toronto", "America/Mexico_City", "America/Bogota", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
-  "America/Phoenix", "America/Halifax", "America/St_Johns", "America/Santiago", "America/Caracas",
-  "Atlantic/Azores", "Atlantic/Cape_Verde",
-  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Istanbul", "Europe/Moscow",
-  "Africa/Cairo", "Africa/Lagos", "Africa/Johannesburg", "Africa/Nairobi",
-  "Asia/Dubai", "Asia/Kabul", "Asia/Karachi", "Asia/Kolkata", "Asia/Calcutta", "Asia/Kathmandu",
-  "Asia/Tashkent", "Asia/Almaty", "Asia/Yangon", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta", "Asia/Hanoi",
-  "Asia/Shanghai", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Seoul",
-  "Australia/Perth", "Australia/Darwin", "Australia/Adelaide", "Australia/Sydney", "Australia/Brisbane",
-  "Pacific/Noumea", "Pacific/Auckland", "Pacific/Chatham", "Pacific/Fiji", "Pacific/Tongatapu", "Pacific/Honolulu", "Pacific/Pago_Pago", "Pacific/Kiritimati",
+  ["Pacific/Pago_Pago", "American Samoa"],
+  ["America/New_York", "USA"], ["America/Los_Angeles", "USA"], ["America/Chicago", "USA"],
+  ["America/Denver", "USA"], ["America/Anchorage", "USA"], ["Pacific/Honolulu", "USA"], ["America/Phoenix", "USA"],
+  ["America/Toronto", "Canada"], ["America/Vancouver", "Canada"],
+  ["America/Mexico_City", "Mexico"], ["America/Tijuana", "Mexico"],
+  ["America/Bogota", "Colombia"], ["America/Lima", "Peru"], ["America/Santiago", "Chile"], ["America/Caracas", "Venezuela"],
+  ["America/Sao_Paulo", "Brazil"], ["America/Argentina/Buenos_Aires", "Argentina"], ["America/Montevideo", "Uruguay"],
+  ["Pacific/Tahiti", "French Polynesia"],
+  ["Europe/Lisbon", "Portugal"], ["Atlantic/Azores", "Portugal"], ["Atlantic/Reykjavik", "Iceland"], ["Atlantic/Cape_Verde", "Cape Verde"],
+  ["Europe/London", "UK"], ["Africa/Casablanca", "Morocco"],
+  ["Europe/Paris", "France"], ["Europe/Berlin", "Germany"], ["Europe/Madrid", "Spain"], ["Africa/Lagos", "Nigeria"],
+  ["Africa/Cairo", "Egypt"], ["Africa/Johannesburg", "South Africa"], ["Europe/Athens", "Greece"],
+  ["Europe/Moscow", "Russia"], ["Europe/Istanbul", "Turkey"], ["Africa/Nairobi", "Kenya"],
+  ["Asia/Dubai", "UAE"], ["Asia/Tehran", "Iran"],
+  ["Asia/Karachi", "Pakistan"], ["Asia/Kabul", "Afghanistan"],
+  ["Asia/Kolkata", "India"], ["Asia/Calcutta", "India"],
+  ["Asia/Dhaka", "Bangladesh"],
+  ["Asia/Kathmandu", "Nepal"], ["Asia/Katmandu", "Nepal"],
+  ["Asia/Bangkok", "Thailand"], ["Asia/Jakarta", "Indonesia"], ["Asia/Ho_Chi_Minh", "Vietnam"],
+  ["Asia/Yangon", "Myanmar"], ["Asia/Rangoon", "Myanmar"],
+  ["Asia/Shanghai", "China"], ["Asia/Hong_Kong", "China"], ["Asia/Singapore", "Singapore"],
+  ["Asia/Kuala_Lumpur", "Malaysia"], ["Asia/Manila", "Philippines"],
+  ["Asia/Tokyo", "Japan"], ["Asia/Seoul", "South Korea"],
+  ["Australia/Sydney", "Australia"], ["Australia/Perth", "Australia"], ["Australia/Adelaide", "Australia"],
+  ["Asia/Vladivostok", "Russia"], ["Pacific/Noumea", "New Caledonia"], ["Pacific/Guadalcanal", "Solomon Islands"],
+  ["Pacific/Auckland", "New Zealand"], ["Pacific/Fiji", "Fiji"],
+  ["Pacific/Tongatapu", "Tonga"],
 ];
 
 const zoneCityLabel = (tz) => tz.split("/").pop().replace(/_/g, " ");
 
-// Groups timezones by their exact current UTC offset (DST-aware, computed
-// once at load) - including the real half/quarter-hour offsets, not rounded
-// to whole hours - and formats like Windows' timezone list:
-// "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi". Cities are derived from
-// the SAME real, current-offset group the value comes from (never a
-// hand-authored guess), so a label can never drift out of sync with what's
-// actually stored, even as DST shifts which cities land where.
-const getTimeZoneGroups = (zones) => {
-  const now = new Date();
-  const offsetMinutes = (tz) => {
-    try {
-      const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
-        .formatToParts(now)
-        .find((p) => p.type === "timeZoneName")?.value || "GMT+00:00";
-      const m = parts.match(/GMT([+-])(\d{2}):(\d{2})/);
-      if (!m) return 0;
-      const sign = m[1] === "-" ? -1 : 1;
-      return sign * (Number(m[2]) * 60 + Number(m[3]));
-    } catch {
-      return 0;
-    }
-  };
+// A few entries are just older/newer name aliases for the exact same place,
+// or (Hong Kong) a separately-administered city that nonetheless keeps the
+// same clock time as the rest of its country - not a second real timezone.
+// Don't let listing both inflate a country's zone count and wrongly make it
+// look multi-timezone.
+const ALIAS_CANONICAL = {
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Asia/Hong_Kong": "Asia/Shanghai", // same clock time as the rest of China
+};
 
+// Countries with only one DISTINCT entry in MAJOR_ZONES are treated as
+// single-timezone (e.g. Japan, Thailand, UAE) - show the country name instead
+// of a city. Countries with multiple distinct entries (USA, Canada, Russia,
+// Australia, Mexico, Brazil) span real internal timezone differences, so a
+// city name stays more precise/correct.
+const COUNTRY_ZONE_COUNTS = (() => {
+  const byCountry = new Map();
+  for (const [zone, country] of MAJOR_ZONES) {
+    const canonical = ALIAS_CANONICAL[zone] || zone;
+    if (!byCountry.has(country)) byCountry.set(country, new Set());
+    byCountry.get(country).add(canonical);
+  }
+  const counts = {};
+  for (const [country, set] of byCountry) counts[country] = set.size;
+  return counts;
+})();
+
+// These countries only have one entry in MAJOR_ZONES (their mainland/capital),
+// but actually have real overseas territories sitting in OTHER timezones
+// (France: French Polynesia/Guiana/Reunion; UK: Falklands/Cayman/Bermuda;
+// Portugal: Azores vs mainland; Spain: Canary Islands; Indonesia: Bali/Papua
+// are different zones from Jakarta; Chile: Easter Island). Calling the whole
+// country by one timezone's name would be wrong, so always show the city.
+const HAS_OTHER_TIMEZONE_TERRITORIES = new Set(["France", "UK", "Portugal", "Spain", "Indonesia", "Chile"]);
+
+const zoneDisplayLabel = (zone, country) =>
+  COUNTRY_ZONE_COUNTS[country] === 1 && !HAS_OTHER_TIMEZONE_TERRITORIES.has(country) ? country : zoneCityLabel(zone);
+
+const getOffsetMinutes = (tz, now = new Date()) => {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
+      .formatToParts(now)
+      .find((p) => p.type === "timeZoneName")?.value || "GMT+00:00";
+    const m = parts.match(/GMT([+-])(\d{2}):(\d{2})/);
+    if (!m) return 0;
+    const sign = m[1] === "-" ? -1 : 1;
+    return sign * (Number(m[2]) * 60 + Number(m[3]));
+  } catch {
+    return 0;
+  }
+};
+
+// A zone's standard (non-DST) offset, computed hemisphere-agnostically: DST
+// always advances the clock to a numerically HIGHER offset than standard
+// time, whether that happens in the zone's local winter (Northern Hemisphere,
+// e.g. New York's EST -5 vs EDT -4) or local summer (Southern Hemisphere,
+// e.g. Sydney's AEST +10 vs AEDT +11) - so the lower of January's and July's
+// offset is always the standard one, regardless of hemisphere. Computed live
+// rather than hand-tracked, since DST policy keeps changing country to
+// country (Mexico dropped it in 2022, Iran in 2022, Turkey/Russia/Brazil
+// years before that, Egypt has flip-flopped more than once).
+const getStandardOffsetMinutes = (tz) => {
+  const thisYear = new Date().getUTCFullYear();
+  const jan = getOffsetMinutes(tz, new Date(Date.UTC(thisYear, 0, 1)));
+  const jul = getOffsetMinutes(tz, new Date(Date.UTC(thisYear, 6, 1)));
+  return Math.min(jan, jul);
+};
+
+// Groups timezones into standardized 1-hour-wide UTC offset buckets, using
+// each zone's STANDARD (winter) offset as the bucketing baseline rather than
+// today's live offset - so a zone's bucket never drifts with the seasons
+// (the original bug this design fixes), and DST-observing places (New York,
+// London, Sydney, etc.) stay included, just labeled by their standard time.
+// Half/quarter-hour zones are rounded to the nearest hour. Up to 3 well-known
+// places are picked per group, never two from the same country - shown as a
+// country name if that country is effectively a single timezone, otherwise
+// as a city name.
+const getTimeZoneGroups = (zones) => {
   const groups = new Map();
   for (const tz of zones) {
     if (tz.startsWith("Etc/")) continue; // not real, user-recognizable places
-    const minutes = offsetMinutes(tz);
-    if (!groups.has(minutes)) groups.set(minutes, []);
-    groups.get(minutes).push(tz);
+    const hour = Math.round(getStandardOffsetMinutes(tz) / 60);
+    if (!groups.has(hour)) groups.set(hour, []);
+    groups.get(hour).push(tz);
   }
 
-  const formatOffset = (minutes) => {
-    const sign = minutes < 0 ? "-" : "+";
-    const abs = Math.abs(minutes);
-    const h = String(Math.floor(abs / 60)).padStart(2, "0");
-    const m = String(abs % 60).padStart(2, "0");
-    return `(UTC${sign}${h}:${m})`;
-  };
+  const formatOffset = (hour) => `(UTC${hour < 0 ? "-" : "+"}${String(Math.abs(hour)).padStart(2, "0")}:00)`;
 
   return Array.from(groups.entries())
     .sort(([a], [b]) => a - b)
-    .map(([minutes, tzs]) => {
-      const majorMatches = MAJOR_ZONES.filter((z) => tzs.includes(z));
-      const cityPool = majorMatches.length > 0 ? majorMatches : tzs.sort();
-      const representative = cityPool[0];
-      const cities = cityPool.slice(0, 3).map(zoneCityLabel).sort().join(", ");
-      return { value: representative, label: `${formatOffset(minutes)} ${cities}` };
+    .map(([hour, tzs]) => {
+      const seenCountries = new Set();
+      const picks = [];
+      for (const [zone, country] of MAJOR_ZONES) {
+        if (picks.length >= 3) break;
+        if (!tzs.includes(zone) || seenCountries.has(country)) continue;
+        seenCountries.add(country);
+        picks.push([zone, country]);
+      }
+      const pool = picks.length > 0 ? picks : tzs.sort().slice(0, 3).map((z) => [z, null]);
+      const representative = pool[0][0];
+      const places = pool.map(([zone, country]) => (country ? zoneDisplayLabel(zone, country) : zoneCityLabel(zone))).sort().join(", ");
+      return { value: representative, hour, label: `${formatOffset(hour)} ${places}` };
     });
 };
 
 const TIME_ZONE_GROUPS = getTimeZoneGroups(TIME_ZONE_OPTIONS);
+
+// Resolves a saved timezone to whichever group currently shares its exact
+// (rounded) offset, so the <select>'s checkmark always lands on one of the
+// real, well-formatted options - even if the saved zone string isn't itself a
+// group's chosen representative (e.g. after MAJOR_ZONES priorities change).
+const resolveTimeZoneDisplayValue = (tz) => {
+  const hour = Math.round(getStandardOffsetMinutes(tz) / 60);
+  const match = TIME_ZONE_GROUPS.find((g) => g.hour === hour);
+  return match ? match.value : tz;
+};
 
 // Default send time is a flat 9:30am in whatever timezone the user is in -
 // not converted/anchored to any market's open. Set once (on creation, or
@@ -188,10 +276,20 @@ export default function App() {
   const [sendHour, setSendHour] = useState(DEFAULT_SEND_HOUR);
   const [sendMinute, setSendMinute] = useState(DEFAULT_SEND_MINUTE);
   const [timeZone, setTimeZone] = useState(getDefaultTimeZone());
+  const [tzQuery, setTzQuery] = useState("");
   const [philosophySaved, setPhilosophySaved] = useState(false);
   const philosophyLoadedRef = useRef(false);
 
   const MAX_TICKERS = 5;
+
+  // Keeps the typeable time zone field's text in sync with whatever is
+  // actually selected (on load, or after a programmatic change) - typing
+  // itself only updates tzQuery locally until it matches a real option, so
+  // this effect never fights the user mid-keystroke.
+  useEffect(() => {
+    const match = TIME_ZONE_GROUPS.find((g) => g.value === resolveTimeZoneDisplayValue(timeZone));
+    setTzQuery(match ? match.label : timeZone);
+  }, [timeZone]);
 
   // Autosave Philosophy on edit (debounced) - skips the very first set from
   // loadUserData so opening the page doesn't immediately re-save unchanged data.
@@ -506,7 +604,7 @@ export default function App() {
                 <label style={styles.label}>Send Time</label>
                 <div style={styles.timeRow}>
                   {frequency === "Weekly" && (
-                    <div style={{ ...styles.timeField, flex: 2 }}>
+                    <div style={{ ...styles.timeField, flex: "1 1 130px" }}>
                       <label style={styles.subLabel}>Day</label>
                       <select
                         style={styles.selectInline}
@@ -521,7 +619,7 @@ export default function App() {
                   )}
 
                   {frequency === "Monthly" && (
-                    <div style={{ ...styles.timeField, flex: 2 }}>
+                    <div style={{ ...styles.timeField, flex: "1 1 80px" }}>
                       <label style={styles.subLabel}>Day</label>
                       <select
                         style={styles.selectInline}
@@ -535,7 +633,7 @@ export default function App() {
                     </div>
                   )}
 
-                  <div style={styles.timeField}>
+                  <div style={{ ...styles.timeField, flex: "0 1 70px" }}>
                     <label style={styles.subLabel}>Hour</label>
                     <select
                       style={styles.selectInline}
@@ -547,7 +645,7 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                  <div style={styles.timeField}>
+                  <div style={{ ...styles.timeField, flex: "0 1 70px" }}>
                     <label style={styles.subLabel}>Min</label>
                     <select
                       style={styles.selectInline}
@@ -559,20 +657,29 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                  <div style={{ ...styles.timeField, flex: 3 }}>
+                  <div style={{ ...styles.timeField, flex: "4 1 260px" }}>
                     <label style={styles.subLabel}>Zone</label>
-                    <select
+                    <input
                       style={styles.selectInline}
-                      value={timeZone}
-                      onChange={(e) => handleTimeZoneChange(e.target.value)}
-                    >
-                      {!TIME_ZONE_GROUPS.some((group) => group.value === timeZone) && (
-                        <option value={timeZone}>{timeZone}</option>
-                      )}
+                      type="text"
+                      list="timezone-options"
+                      value={tzQuery}
+                      onChange={(e) => {
+                        const typed = e.target.value;
+                        setTzQuery(typed);
+                        const match = TIME_ZONE_GROUPS.find((g) => g.label.toLowerCase() === typed.toLowerCase());
+                        if (match) handleTimeZoneChange(match.value);
+                      }}
+                      onBlur={() => {
+                        const match = TIME_ZONE_GROUPS.find((g) => g.label.toLowerCase() === tzQuery.toLowerCase());
+                        setTzQuery(match ? match.label : (TIME_ZONE_GROUPS.find((g) => g.value === resolveTimeZoneDisplayValue(timeZone))?.label || timeZone));
+                      }}
+                    />
+                    <datalist id="timezone-options">
                       {TIME_ZONE_GROUPS.map((group) => (
-                        <option key={group.value} value={group.value}>{group.label}</option>
+                        <option key={group.value} value={group.label} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
                 </div>
                 <p style={styles.hint}>Defaults to your device's time zone. Briefings send within 15 minutes of your chosen time.</p>
@@ -639,7 +746,7 @@ const styles = {
   textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   select: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
-  timeRow: { display: "flex", gap: 10 },
+  timeRow: { display: "flex", gap: 10, flexWrap: "wrap" },
   timeField: { flex: 1 },
   subLabel: { display: "block", fontSize: 12, color: "#6e6e73", margin: "0 0 4px" },
   selectInline: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
