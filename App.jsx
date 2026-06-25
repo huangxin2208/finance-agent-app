@@ -75,6 +75,47 @@ const getTimeZoneOptions = () => {
 
 const TIME_ZONE_OPTIONS = getTimeZoneOptions();
 
+// Groups timezones by their current UTC offset (DST-aware, computed once at
+// load) so e.g. every zone currently at UTC-05:00 shows together, regardless
+// of continent - what the user actually cares about is "what time will it be."
+const getTimeZoneGroups = (zones) => {
+  const now = new Date();
+  const offsetMinutes = (tz) => {
+    try {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "longOffset" })
+        .formatToParts(now)
+        .find((p) => p.type === "timeZoneName")?.value || "GMT+00:00";
+      const m = parts.match(/GMT([+-])(\d{2}):(\d{2})/);
+      if (!m) return 0;
+      const sign = m[1] === "-" ? -1 : 1;
+      return sign * (Number(m[2]) * 60 + Number(m[3]));
+    } catch {
+      return 0;
+    }
+  };
+
+  const groups = new Map();
+  for (const tz of zones) {
+    const minutes = offsetMinutes(tz);
+    if (!groups.has(minutes)) groups.set(minutes, []);
+    groups.get(minutes).push(tz);
+  }
+
+  const formatOffset = (minutes) => {
+    const sign = minutes < 0 ? "-" : "+";
+    const abs = Math.abs(minutes);
+    const h = String(Math.floor(abs / 60)).padStart(2, "0");
+    const m = String(abs % 60).padStart(2, "0");
+    return `UTC${sign}${h}:${m}`;
+  };
+
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([minutes, tzs]) => ({ label: formatOffset(minutes), zones: tzs.sort() }));
+};
+
+const TIME_ZONE_GROUPS = getTimeZoneGroups(TIME_ZONE_OPTIONS);
+
 // Default send time is a flat 9:30am in whatever timezone the user is in -
 // not converted/anchored to any market's open. Set once (on creation, or
 // backfilled the first time an older record is missing it) and persisted,
@@ -407,56 +448,62 @@ export default function App() {
 
             {frequency !== "Never" && (
               <>
-                {frequency === "Weekly" && (
-                  <>
-                    <label style={styles.label}>Day of the Week</label>
-                    <select
-                      style={styles.select}
-                      value={weeklyDay}
-                      onChange={(e) => handleWeeklyDayChange(e.target.value)}
-                    >
-                      {DAYS_OF_WEEK.map((day) => (
-                        <option key={day} value={day}>{day}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-
-                {frequency === "Monthly" && (
-                  <>
-                    <label style={styles.label}>Day of the Month</label>
-                    <select
-                      style={styles.select}
-                      value={monthlyDay}
-                      onChange={(e) => handleMonthlyDayChange(Number(e.target.value))}
-                    >
-                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                        <option key={day} value={day}>{day}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-
-                <label style={styles.label}>Time of Day</label>
+                <label style={styles.label}>Send Time</label>
                 <div style={styles.timeRow}>
-                  <select
-                    style={styles.selectInline}
-                    value={sendHour}
-                    onChange={(e) => handleSendTimeChange(Number(e.target.value), sendMinute)}
-                  >
-                    {Array.from({ length: 24 }, (_, i) => i).map((h) => (
-                      <option key={h} value={h}>{String(h).padStart(2, "0")}:00 - {String(h).padStart(2, "0")}:59</option>
-                    ))}
-                  </select>
-                  <select
-                    style={styles.selectInline}
-                    value={sendMinute}
-                    onChange={(e) => handleSendTimeChange(sendHour, Number(e.target.value))}
-                  >
-                    {[0, 30].map((m) => (
-                      <option key={m} value={m}>:{String(m).padStart(2, "0")}</option>
-                    ))}
-                  </select>
+                  {frequency === "Weekly" && (
+                    <div style={{ ...styles.timeField, flex: 2 }}>
+                      <label style={styles.subLabel}>Day</label>
+                      <select
+                        style={styles.selectInline}
+                        value={weeklyDay}
+                        onChange={(e) => handleWeeklyDayChange(e.target.value)}
+                      >
+                        {DAYS_OF_WEEK.map((day) => (
+                          <option key={day} value={day}>{day}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {frequency === "Monthly" && (
+                    <div style={{ ...styles.timeField, flex: 2 }}>
+                      <label style={styles.subLabel}>Day</label>
+                      <select
+                        style={styles.selectInline}
+                        value={monthlyDay}
+                        onChange={(e) => handleMonthlyDayChange(Number(e.target.value))}
+                      >
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                          <option key={day} value={day}>{day}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div style={styles.timeField}>
+                    <label style={styles.subLabel}>Hour</label>
+                    <select
+                      style={styles.selectInline}
+                      value={sendHour}
+                      onChange={(e) => handleSendTimeChange(Number(e.target.value), sendMinute)}
+                    >
+                      {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                        <option key={h} value={h}>{String(h).padStart(2, "0")}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={styles.timeField}>
+                    <label style={styles.subLabel}>Min</label>
+                    <select
+                      style={styles.selectInline}
+                      value={sendMinute}
+                      onChange={(e) => handleSendTimeChange(sendHour, Number(e.target.value))}
+                    >
+                      {[0, 30].map((m) => (
+                        <option key={m} value={m}>{String(m).padStart(2, "0")}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <label style={styles.label}>Time Zone</label>
@@ -465,8 +512,12 @@ export default function App() {
                   value={timeZone}
                   onChange={(e) => handleTimeZoneChange(e.target.value)}
                 >
-                  {TIME_ZONE_OPTIONS.map((tz) => (
-                    <option key={tz} value={tz}>{tz}</option>
+                  {TIME_ZONE_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.zones.map((tz) => (
+                        <option key={tz} value={tz}>{tz}</option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <p style={styles.hint}>Defaults to your device's time zone. Briefings send within 15 minutes of your chosen time.</p>
@@ -533,7 +584,9 @@ const styles = {
   input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   select: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
   timeRow: { display: "flex", gap: 10 },
-  selectInline: { flex: 1, padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
+  timeField: { flex: 1 },
+  subLabel: { display: "block", fontSize: 12, color: "#6e6e73", margin: "0 0 4px" },
+  selectInline: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
   saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
   saveBtnDisabled: { marginTop: 24, padding: "12px 28px", background: "#a0b4c8", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "not-allowed" },
   divider: { border: "none", borderTop: "1px solid #f0f0f0", margin: "28px 0" },
