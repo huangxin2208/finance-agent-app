@@ -77,54 +77,35 @@ const getTimeZoneOptions = () => {
 
 const TIME_ZONE_OPTIONS = getTimeZoneOptions();
 
-// Well-known zones preferred as the representative for their offset group,
-// in priority order - so a group shows as "UTC-04:00 (New York)" rather than
-// some obscure "America/Indiana/Knox" that happens to share the same offset.
+// Well-known zones preferred as the representative VALUE for their offset
+// group, in priority order - so a group stores e.g. a real "America/New_York"
+// rather than some obscure linked zone. Never an "Etc/" zone - those exist in
+// the IANA db but aren't real, user-recognizable places. Includes the common
+// half/quarter-hour zones too, matching Windows' standard timezone list.
 const MAJOR_ZONES = [
   "UTC",
   "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Anchorage",
   "America/Toronto", "America/Mexico_City", "America/Bogota", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+  "America/Phoenix", "America/Halifax", "America/St_Johns", "America/Santiago", "America/Caracas",
+  "Atlantic/Azores", "Atlantic/Cape_Verde",
   "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Istanbul", "Europe/Moscow",
   "Africa/Cairo", "Africa/Lagos", "Africa/Johannesburg", "Africa/Nairobi",
-  "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta",
+  "Asia/Dubai", "Asia/Kabul", "Asia/Karachi", "Asia/Kolkata", "Asia/Calcutta", "Asia/Kathmandu",
+  "Asia/Tashkent", "Asia/Almaty", "Asia/Yangon", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta", "Asia/Hanoi",
   "Asia/Shanghai", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Seoul",
-  "Australia/Perth", "Australia/Sydney", "Pacific/Auckland", "Pacific/Honolulu", "Pacific/Fiji",
+  "Australia/Perth", "Australia/Darwin", "Australia/Adelaide", "Australia/Sydney", "Australia/Brisbane",
+  "Pacific/Noumea", "Pacific/Auckland", "Pacific/Chatham", "Pacific/Fiji", "Pacific/Tongatapu", "Pacific/Honolulu", "Pacific/Pago_Pago", "Pacific/Kiritimati",
 ];
 
 const zoneCityLabel = (tz) => tz.split("/").pop().replace(/_/g, " ");
 
-// Friendlier multi-city labels for the offsets most users actually pick,
-// e.g. "UTC-05:00 (New York, Miami, Toronto)" - matches the standard
-// convention used by most timezone pickers. Falls back to a single city
-// name (derived from the zone id) for less common offsets not listed here.
-const CITY_LABELS = {
-  "Pacific/Honolulu": "Honolulu",
-  "America/Anchorage": "Anchorage",
-  "America/Los_Angeles": "Los Angeles, Seattle, Vancouver",
-  "America/Denver": "Denver, Salt Lake City, Phoenix",
-  "America/Chicago": "Chicago, Dallas, Mexico City",
-  "America/New_York": "New York, Miami, Toronto",
-  "America/Sao_Paulo": "Sao Paulo, Buenos Aires",
-  "Europe/London": "London, Dublin, Lisbon",
-  "Europe/Paris": "Paris, Berlin, Madrid, Rome",
-  "Europe/Istanbul": "Istanbul, Athens, Cairo",
-  "Europe/Moscow": "Moscow",
-  "Asia/Dubai": "Dubai, Abu Dhabi",
-  "Asia/Karachi": "Karachi, Islamabad",
-  "Asia/Kolkata": "Mumbai, New Delhi, Kolkata",
-  "Asia/Calcutta": "Mumbai, New Delhi, Kolkata",
-  "Asia/Dhaka": "Dhaka",
-  "Asia/Bangkok": "Bangkok, Jakarta",
-  "Asia/Shanghai": "Beijing, Shanghai, Singapore",
-  "Asia/Tokyo": "Tokyo, Seoul",
-  "Australia/Sydney": "Sydney, Melbourne",
-  "Pacific/Auckland": "Auckland, Wellington",
-};
-
-// Groups timezones by their current UTC offset (DST-aware, computed once at
-// load) and collapses each group to a single representative option - what the
-// user cares about is "what time will it be," not picking among a dozen
-// obscure zones that currently share the same clock time.
+// Groups timezones by their exact current UTC offset (DST-aware, computed
+// once at load) - including the real half/quarter-hour offsets, not rounded
+// to whole hours - and formats like Windows' timezone list:
+// "(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi". Cities are derived from
+// the SAME real, current-offset group the value comes from (never a
+// hand-authored guess), so a label can never drift out of sync with what's
+// actually stored, even as DST shifts which cities land where.
 const getTimeZoneGroups = (zones) => {
   const now = new Date();
   const offsetMinutes = (tz) => {
@@ -143,6 +124,7 @@ const getTimeZoneGroups = (zones) => {
 
   const groups = new Map();
   for (const tz of zones) {
+    if (tz.startsWith("Etc/")) continue; // not real, user-recognizable places
     const minutes = offsetMinutes(tz);
     if (!groups.has(minutes)) groups.set(minutes, []);
     groups.get(minutes).push(tz);
@@ -153,16 +135,17 @@ const getTimeZoneGroups = (zones) => {
     const abs = Math.abs(minutes);
     const h = String(Math.floor(abs / 60)).padStart(2, "0");
     const m = String(abs % 60).padStart(2, "0");
-    return `UTC${sign}${h}:${m}`;
+    return `(UTC${sign}${h}:${m})`;
   };
 
   return Array.from(groups.entries())
     .sort(([a], [b]) => a - b)
     .map(([minutes, tzs]) => {
-      const representative = MAJOR_ZONES.find((z) => tzs.includes(z)) || tzs.sort()[0];
-      const cities = CITY_LABELS[representative] || zoneCityLabel(representative);
-      // UTC±HH:MM (City, City, ...) - e.g. "UTC-05:00 (New York, Miami, Toronto)"
-      return { value: representative, label: `${formatOffset(minutes)} (${cities})` };
+      const majorMatches = MAJOR_ZONES.filter((z) => tzs.includes(z));
+      const cityPool = majorMatches.length > 0 ? majorMatches : tzs.sort();
+      const representative = cityPool[0];
+      const cities = cityPool.slice(0, 3).map(zoneCityLabel).sort().join(", ");
+      return { value: representative, label: `${formatOffset(minutes)} ${cities}` };
     });
 };
 
