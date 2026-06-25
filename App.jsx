@@ -75,9 +75,26 @@ const getTimeZoneOptions = () => {
 
 const TIME_ZONE_OPTIONS = getTimeZoneOptions();
 
+// Well-known zones preferred as the representative for their offset group,
+// in priority order - so a group shows as "UTC-04:00 (New York)" rather than
+// some obscure "America/Indiana/Knox" that happens to share the same offset.
+const MAJOR_ZONES = [
+  "UTC",
+  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Anchorage",
+  "America/Toronto", "America/Mexico_City", "America/Bogota", "America/Sao_Paulo", "America/Argentina/Buenos_Aires",
+  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Rome", "Europe/Istanbul", "Europe/Moscow",
+  "Africa/Cairo", "Africa/Lagos", "Africa/Johannesburg", "Africa/Nairobi",
+  "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok", "Asia/Jakarta",
+  "Asia/Shanghai", "Asia/Singapore", "Asia/Hong_Kong", "Asia/Tokyo", "Asia/Seoul",
+  "Australia/Perth", "Australia/Sydney", "Pacific/Auckland", "Pacific/Honolulu", "Pacific/Fiji",
+];
+
+const zoneCityLabel = (tz) => tz.split("/").pop().replace(/_/g, " ");
+
 // Groups timezones by their current UTC offset (DST-aware, computed once at
-// load) so e.g. every zone currently at UTC-05:00 shows together, regardless
-// of continent - what the user actually cares about is "what time will it be."
+// load) and collapses each group to a single representative option - what the
+// user cares about is "what time will it be," not picking among a dozen
+// obscure zones that currently share the same clock time.
 const getTimeZoneGroups = (zones) => {
   const now = new Date();
   const offsetMinutes = (tz) => {
@@ -111,7 +128,10 @@ const getTimeZoneGroups = (zones) => {
 
   return Array.from(groups.entries())
     .sort(([a], [b]) => a - b)
-    .map(([minutes, tzs]) => ({ label: formatOffset(minutes), zones: tzs.sort() }));
+    .map(([minutes, tzs]) => {
+      const representative = MAJOR_ZONES.find((z) => tzs.includes(z)) || tzs.sort()[0];
+      return { value: representative, label: `${formatOffset(minutes)} (${zoneCityLabel(representative)})` };
+    });
 };
 
 const TIME_ZONE_GROUPS = getTimeZoneGroups(TIME_ZONE_OPTIONS);
@@ -504,22 +524,22 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                </div>
-
-                <label style={styles.label}>Time Zone</label>
-                <select
-                  style={styles.select}
-                  value={timeZone}
-                  onChange={(e) => handleTimeZoneChange(e.target.value)}
-                >
-                  {TIME_ZONE_GROUPS.map((group) => (
-                    <optgroup key={group.label} label={group.label}>
-                      {group.zones.map((tz) => (
-                        <option key={tz} value={tz}>{tz}</option>
+                  <div style={{ ...styles.timeField, flex: 3 }}>
+                    <label style={styles.subLabel}>Zone</label>
+                    <select
+                      style={styles.selectInline}
+                      value={timeZone}
+                      onChange={(e) => handleTimeZoneChange(e.target.value)}
+                    >
+                      {!TIME_ZONE_GROUPS.some((group) => group.value === timeZone) && (
+                        <option value={timeZone}>{timeZone}</option>
+                      )}
+                      {TIME_ZONE_GROUPS.map((group) => (
+                        <option key={group.value} value={group.value}>{group.label}</option>
                       ))}
-                    </optgroup>
-                  ))}
-                </select>
+                    </select>
+                  </div>
+                </div>
                 <p style={styles.hint}>Defaults to your device's time zone. Briefings send within 15 minutes of your chosen time.</p>
               </>
             )}
