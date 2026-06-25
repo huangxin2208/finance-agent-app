@@ -30,6 +30,8 @@ const FREQUENCY_OPTIONS = [
 const TICKER_PATTERN = /^[A-Z]{1,5}([.-][A-Z]{1,2})?$/;
 const VALID_TICKER_SET = new Set(VALID_TICKERS);
 
+const SAMPLE_PHILOSOPHY = "I'm a long-term value investor with a 5+ year horizon and moderate risk tolerance. I look for low P/E and P/B ratios, strong free cash flow, low debt-to-equity, and consistent or growing dividends. I avoid speculative, highly volatile stocks. I want to know about insider buying/selling and major analyst rating changes.";
+
 // Auto-fixes whitespace/case/duplicates (cosmetic, doesn't change meaning).
 // Only flags entries that aren't actually listed on NASDAQ/NYSE/AMEX - catches
 // typos like "AAPLE" that look format-valid but aren't real tickers. Every
@@ -91,6 +93,34 @@ const MAJOR_ZONES = [
 
 const zoneCityLabel = (tz) => tz.split("/").pop().replace(/_/g, " ");
 
+// Friendlier multi-city labels for the offsets most users actually pick,
+// e.g. "UTC-05:00 (New York, Miami, Toronto)" - matches the standard
+// convention used by most timezone pickers. Falls back to a single city
+// name (derived from the zone id) for less common offsets not listed here.
+const CITY_LABELS = {
+  "Pacific/Honolulu": "Honolulu",
+  "America/Anchorage": "Anchorage",
+  "America/Los_Angeles": "Los Angeles, Seattle, Vancouver",
+  "America/Denver": "Denver, Salt Lake City, Phoenix",
+  "America/Chicago": "Chicago, Dallas, Mexico City",
+  "America/New_York": "New York, Miami, Toronto",
+  "America/Sao_Paulo": "Sao Paulo, Buenos Aires",
+  "Europe/London": "London, Dublin, Lisbon",
+  "Europe/Paris": "Paris, Berlin, Madrid, Rome",
+  "Europe/Istanbul": "Istanbul, Athens, Cairo",
+  "Europe/Moscow": "Moscow",
+  "Asia/Dubai": "Dubai, Abu Dhabi",
+  "Asia/Karachi": "Karachi, Islamabad",
+  "Asia/Kolkata": "Mumbai, New Delhi, Kolkata",
+  "Asia/Calcutta": "Mumbai, New Delhi, Kolkata",
+  "Asia/Dhaka": "Dhaka",
+  "Asia/Bangkok": "Bangkok, Jakarta",
+  "Asia/Shanghai": "Beijing, Shanghai, Singapore",
+  "Asia/Tokyo": "Tokyo, Seoul",
+  "Australia/Sydney": "Sydney, Melbourne",
+  "Pacific/Auckland": "Auckland, Wellington",
+};
+
 // Groups timezones by their current UTC offset (DST-aware, computed once at
 // load) and collapses each group to a single representative option - what the
 // user cares about is "what time will it be," not picking among a dozen
@@ -130,7 +160,9 @@ const getTimeZoneGroups = (zones) => {
     .sort(([a], [b]) => a - b)
     .map(([minutes, tzs]) => {
       const representative = MAJOR_ZONES.find((z) => tzs.includes(z)) || tzs.sort()[0];
-      return { value: representative, label: `${formatOffset(minutes)} (${zoneCityLabel(representative)})` };
+      const cities = CITY_LABELS[representative] || zoneCityLabel(representative);
+      // UTC±HH:MM (City, City, ...) - e.g. "UTC-05:00 (New York, Miami, Toronto)"
+      return { value: representative, label: `${formatOffset(minutes)} (${cities})` };
     });
 };
 
@@ -220,6 +252,7 @@ export default function App() {
       setPhilosophy(f.Philosophy || "");
       setTickers(f.Tickers || "");
       setTickersTouched(false);
+      setSaved(true); // what's loaded is already the saved state
       setFrequency(f.Frequency || "Daily");
       setWeeklyDay(f.WeeklyDay || "Monday");
       setMonthlyDay(f.MonthlyDay ?? 1);
@@ -264,6 +297,7 @@ export default function App() {
       });
       if (newRecord.records) {
         setAirtableRecord(newRecord.records[0]);
+        setSaved(true); // freshly created with Tickers: "" - already saved
         setFrequency("Daily");
         setWeeklyDay("Monday");
         setMonthlyDay(1);
@@ -315,7 +349,6 @@ export default function App() {
     setTickersTouched(false);
     setSaving(false);
     setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
   };
 
   const handleFrequencyChange = async (newFreq) => {
@@ -365,6 +398,7 @@ export default function App() {
     setAirtableRecord(null);
     setPhilosophy("");
     setTickers("");
+    setSaved(false);
     setTickersTouched(false);
     setFrequency("Daily");
     setBriefings([]);
@@ -424,9 +458,23 @@ export default function App() {
                 setPhilosophy(e.target.value);
                 setPhilosophySaved(false);
               }}
-              placeholder="Describe how you invest..."
+              placeholder={SAMPLE_PHILOSOPHY}
               rows={6}
             />
+            <p style={styles.hint}>
+              Not sure what to write?{" "}
+              <button
+                type="button"
+                style={styles.linkBtn}
+                onClick={() => {
+                  setPhilosophy(SAMPLE_PHILOSOPHY);
+                  setPhilosophySaved(false);
+                }}
+              >
+                Use this example
+              </button>
+              {" "}- the more specific you are (metrics you care about, risk tolerance, time horizon), the more tailored your briefings will be.
+            </p>
 
             <label style={styles.label}>Stock Tickers</label>
             <input
@@ -435,7 +483,11 @@ export default function App() {
               onChange={(e) => {
                 setTickers(e.target.value);
                 setTickersTouched(true);
+                setSaved(false);
                 if (tickerError) setTickerError("");
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleSave();
               }}
               placeholder="BRK.B, JPM, JNJ, GOOGL, KO"
             />
@@ -589,6 +641,7 @@ const styles = {
   avatar: { width: 32, height: 32, borderRadius: "50%" },
   userName: { fontSize: 14, color: "#1d1d1f", fontWeight: 500 },
   logoutBtn: { fontSize: 13, color: "#0066cc", background: "none", border: "none", cursor: "pointer", padding: "4px 8px" },
+  linkBtn: { fontSize: 13, color: "#0066cc", background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 600, textDecoration: "underline" },
   tabs: { display: "flex", background: "#fff", borderBottom: "1px solid #e5e5e5", padding: "0 24px" },
   tab: { padding: "14px 20px", border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#6e6e73", fontWeight: 500, borderBottom: "2px solid transparent" },
   tabActive: { padding: "14px 20px", border: "none", background: "none", cursor: "pointer", fontSize: 14, color: "#0066cc", fontWeight: 600, borderBottom: "2px solid #0066cc" },
