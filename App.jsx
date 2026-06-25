@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "firebase/auth";
+import VALID_TICKERS from "./tickers.json";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBFchmw6b2Q7-qygQaezGBEqKJbKxPC76c",
@@ -20,11 +21,66 @@ const USERS_TABLE = "tbl7F2aJ0hB8d2jFX";
 const HISTORY_TABLE = "tbl6SeMliXAUlC9ca";
 
 const FREQUENCY_OPTIONS = [
-  { value: "Daily",   label: "Daily",   desc: "Every morning" },
-  { value: "Weekly",  label: "Weekly",  desc: "Every Monday" },
-  { value: "Monthly", label: "Monthly", desc: "1st of month" },
+  { value: "Daily",   label: "Daily",   desc: "Every day" },
+  { value: "Weekly",  label: "Weekly",  desc: "Pick a day" },
+  { value: "Monthly", label: "Monthly", desc: "Pick a date" },
   { value: "Never",   label: "Paused",  desc: "No emails" },
 ];
+
+const TICKER_PATTERN = /^[A-Z]{1,5}([.-][A-Z]{1,2})?$/;
+const VALID_TICKER_SET = new Set(VALID_TICKERS);
+
+// Auto-fixes whitespace/case/duplicates (cosmetic, doesn't change meaning).
+// Only flags entries that aren't actually listed on NASDAQ/NYSE/AMEX - catches
+// typos like "AAPLE" that look format-valid but aren't real tickers. Every
+// save re-checks every ticker against the current directory, including ones
+// saved previously - no grandfathering.
+const normalizeTickers = (raw) => {
+  const seen = new Set();
+  const cleaned = [];
+  const invalid = [];
+  for (const entry of raw.split(",")) {
+    const t = entry.trim().toUpperCase();
+    if (!t) continue;
+    if (!TICKER_PATTERN.test(t) || !VALID_TICKER_SET.has(t)) {
+      invalid.push(t);
+      continue;
+    }
+    if (!seen.has(t)) {
+      seen.add(t);
+      cleaned.push(t);
+    }
+  }
+  return { cleaned, invalid };
+};
+
+const DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+const getDefaultTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+};
+
+const getTimeZoneOptions = () => {
+  try {
+    if (typeof Intl.supportedValuesOf === "function") return Intl.supportedValuesOf("timeZone");
+  } catch {
+    // fall through to fallback list below
+  }
+  return ["UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Europe/London", "Europe/Paris", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney"];
+};
+
+const TIME_ZONE_OPTIONS = getTimeZoneOptions();
+
+// Default send time is a flat 9:30am in whatever timezone the user is in -
+// not converted/anchored to any market's open. Set once (on creation, or
+// backfilled the first time an older record is missing it) and persisted,
+// so it never silently shifts if the user later changes their timezone.
+const DEFAULT_SEND_HOUR = 9;
+const DEFAULT_SEND_MINUTE = 30;
 
 const airtableFetch = async (url, options = {}) => {
   const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${url}`, {
@@ -50,8 +106,34 @@ export default function App() {
   const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState("profile");
   const [tickerError, setTickerError] = useState("");
+  const [tickersTouched, setTickersTouched] = useState(false);
+  const [weeklyDay, setWeeklyDay] = useState("Monday");
+  const [monthlyDay, setMonthlyDay] = useState(1);
+  const [sendHour, setSendHour] = useState(DEFAULT_SEND_HOUR);
+  const [sendMinute, setSendMinute] = useState(DEFAULT_SEND_MINUTE);
+  const [timeZone, setTimeZone] = useState(getDefaultTimeZone());
+  const [philosophySaved, setPhilosophySaved] = useState(false);
+  const philosophyLoadedRef = useRef(false);
 
   const MAX_TICKERS = 5;
+
+  // Autosave Philosophy on edit (debounced) - skips the very first set from
+  // loadUserData so opening the page doesn't immediately re-save unchanged data.
+  useEffect(() => {
+    if (!airtableRecord) return;
+    if (!philosophyLoadedRef.current) {
+      philosophyLoadedRef.current = true;
+      return;
+    }
+    const timeout = setTimeout(async () => {
+      await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ fields: { Philosophy: philosophy } }),
+      });
+      setPhilosophySaved(true);
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [philosophy, airtableRecord]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -66,16 +148,39 @@ export default function App() {
   }, []);
 
   const loadUserData = async (email) => {
+    philosophyLoadedRef.current = false;
     const data = await airtableFetch(
       `${USERS_TABLE}?filterByFormula=${encodeURIComponent(`{Email} = '${email}'`)}`
     );
     if (data.records && data.records.length > 0) {
       const record = data.records[0];
+      const f = record.fields;
       setAirtableRecord(record);
-      setPhilosophy(record.fields.Philosophy || "");
-      setTickers(record.fields.Tickers || "");
-      setFrequency(record.fields.Frequency || "Daily");
+      setPhilosophy(f.Philosophy || "");
+      setTickers(f.Tickers || "");
+      setTickersTouched(false);
+      setFrequency(f.Frequency || "Daily");
+      setWeeklyDay(f.WeeklyDay || "Monday");
+      setMonthlyDay(f.MonthlyDay ?? 1);
+      setTimeZone(f.TimeZone || getDefaultTimeZone());
+
+      if (f.SendHour == null || f.SendMinute == null) {
+        // Older record predating this field - set the default once and
+        // persist it immediately, so it's fixed from here on and never
+        // recomputed (and thus never silently shifts) on a later login,
+        // even if the user changes their timezone in between.
+        setSendHour(DEFAULT_SEND_HOUR);
+        setSendMinute(DEFAULT_SEND_MINUTE);
+        await airtableFetch(`${USERS_TABLE}/${record.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ fields: { SendHour: DEFAULT_SEND_HOUR, SendMinute: DEFAULT_SEND_MINUTE } }),
+        });
+      } else {
+        setSendHour(f.SendHour);
+        setSendMinute(f.SendMinute);
+      }
     } else {
+      const tz = getDefaultTimeZone();
       const newRecord = await airtableFetch(USERS_TABLE, {
         method: "POST",
         body: JSON.stringify({
@@ -87,6 +192,11 @@ export default function App() {
               Tickers: "",
               Frequency: "Daily",
               Active: true,
+              WeeklyDay: "Monday",
+              MonthlyDay: 1,
+              SendHour: DEFAULT_SEND_HOUR,
+              SendMinute: DEFAULT_SEND_MINUTE,
+              TimeZone: tz,
             },
           }],
         }),
@@ -94,6 +204,11 @@ export default function App() {
       if (newRecord.records) {
         setAirtableRecord(newRecord.records[0]);
         setFrequency("Daily");
+        setWeeklyDay("Monday");
+        setMonthlyDay(1);
+        setSendHour(DEFAULT_SEND_HOUR);
+        setSendMinute(DEFAULT_SEND_MINUTE);
+        setTimeZone(tz);
       }
     }
   };
@@ -109,19 +224,34 @@ export default function App() {
 
   const handleSave = async () => {
     if (!airtableRecord) return;
-    const tickerCount = tickers.split(",").map((t) => t.trim()).filter(Boolean).length;
-    if (tickerCount > MAX_TICKERS) {
-      setTickerError(`Max ${MAX_TICKERS} tickers allowed (you entered ${tickerCount}).`);
-      return;
+
+    // Only re-validate tickers if the user actually edited that field this
+    // session - editing Philosophy/Frequency shouldn't get blocked by a
+    // ticker that was valid when saved but has since been delisted.
+    let tickersToSave = tickers;
+    if (tickersTouched) {
+      const { cleaned, invalid } = normalizeTickers(tickers);
+      if (invalid.length > 0) {
+        setTickerError(`Not a valid ticker: ${invalid.join(", ")}`);
+        return;
+      }
+      if (cleaned.length > MAX_TICKERS) {
+        setTickerError(`Max ${MAX_TICKERS} tickers allowed (you entered ${cleaned.length}).`);
+        return;
+      }
+      tickersToSave = cleaned.join(", ");
+      setTickers(tickersToSave);
     }
+
     setTickerError("");
     setSaving(true);
     await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
       method: "PATCH",
       body: JSON.stringify({
-        fields: { Philosophy: philosophy, Tickers: tickers },
+        fields: { Tickers: tickersToSave },
       }),
     });
+    setTickersTouched(false);
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
@@ -136,6 +266,35 @@ export default function App() {
     });
   };
 
+  const handleScheduleChange = async (fields) => {
+    if (!airtableRecord) return;
+    await airtableFetch(`${USERS_TABLE}/${airtableRecord.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fields }),
+    });
+  };
+
+  const handleWeeklyDayChange = (day) => {
+    setWeeklyDay(day);
+    handleScheduleChange({ WeeklyDay: day });
+  };
+
+  const handleMonthlyDayChange = (day) => {
+    setMonthlyDay(day);
+    handleScheduleChange({ MonthlyDay: day });
+  };
+
+  const handleSendTimeChange = (hour, minute) => {
+    setSendHour(hour);
+    setSendMinute(minute);
+    handleScheduleChange({ SendHour: hour, SendMinute: minute });
+  };
+
+  const handleTimeZoneChange = (tz) => {
+    setTimeZone(tz);
+    handleScheduleChange({ TimeZone: tz });
+  };
+
   const handleLogin = async () => {
     try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); }
   };
@@ -145,8 +304,14 @@ export default function App() {
     setAirtableRecord(null);
     setPhilosophy("");
     setTickers("");
+    setTickersTouched(false);
     setFrequency("Daily");
     setBriefings([]);
+    setWeeklyDay("Monday");
+    setMonthlyDay(1);
+    setSendHour(DEFAULT_SEND_HOUR);
+    setSendMinute(DEFAULT_SEND_MINUTE);
+    setTimeZone(getDefaultTimeZone());
   };
 
   if (loading) return <div style={styles.centered}><div style={styles.spinner} /></div>;
@@ -187,11 +352,17 @@ export default function App() {
             <h2 style={styles.sectionTitle}>My Investment Profile</h2>
             <p style={styles.hint}>Your briefing is generated based on this profile. Changes take effect on the next send.</p>
 
-            <label style={styles.label}>Investment Philosophy</label>
+            <div style={styles.labelRow}>
+              <label style={{ ...styles.label, margin: 0 }}>Investment Philosophy</label>
+              {philosophySaved && <span style={styles.autosaveHint}>✓ Saved</span>}
+            </div>
             <textarea
               style={styles.textarea}
               value={philosophy}
-              onChange={(e) => setPhilosophy(e.target.value)}
+              onChange={(e) => {
+                setPhilosophy(e.target.value);
+                setPhilosophySaved(false);
+              }}
               placeholder="Describe how you invest..."
               rows={6}
             />
@@ -202,6 +373,7 @@ export default function App() {
               value={tickers}
               onChange={(e) => {
                 setTickers(e.target.value);
+                setTickersTouched(true);
                 if (tickerError) setTickerError("");
               }}
               placeholder="BRK.B, JPM, JNJ, GOOGL, KO"
@@ -232,6 +404,74 @@ export default function App() {
                 </button>
               ))}
             </div>
+
+            {frequency !== "Never" && (
+              <>
+                {frequency === "Weekly" && (
+                  <>
+                    <label style={styles.label}>Day of the Week</label>
+                    <select
+                      style={styles.select}
+                      value={weeklyDay}
+                      onChange={(e) => handleWeeklyDayChange(e.target.value)}
+                    >
+                      {DAYS_OF_WEEK.map((day) => (
+                        <option key={day} value={day}>{day}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                {frequency === "Monthly" && (
+                  <>
+                    <label style={styles.label}>Day of the Month</label>
+                    <select
+                      style={styles.select}
+                      value={monthlyDay}
+                      onChange={(e) => handleMonthlyDayChange(Number(e.target.value))}
+                    >
+                      {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                        <option key={day} value={day}>{day}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                <label style={styles.label}>Time of Day</label>
+                <div style={styles.timeRow}>
+                  <select
+                    style={styles.selectInline}
+                    value={sendHour}
+                    onChange={(e) => handleSendTimeChange(Number(e.target.value), sendMinute)}
+                  >
+                    {Array.from({ length: 24 }, (_, i) => i).map((h) => (
+                      <option key={h} value={h}>{String(h).padStart(2, "0")}:00 - {String(h).padStart(2, "0")}:59</option>
+                    ))}
+                  </select>
+                  <select
+                    style={styles.selectInline}
+                    value={sendMinute}
+                    onChange={(e) => handleSendTimeChange(sendHour, Number(e.target.value))}
+                  >
+                    {[0, 30].map((m) => (
+                      <option key={m} value={m}>:{String(m).padStart(2, "0")}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <label style={styles.label}>Time Zone</label>
+                <select
+                  style={styles.select}
+                  value={timeZone}
+                  onChange={(e) => handleTimeZoneChange(e.target.value)}
+                >
+                  {TIME_ZONE_OPTIONS.map((tz) => (
+                    <option key={tz} value={tz}>{tz}</option>
+                  ))}
+                </select>
+                <p style={styles.hint}>Defaults to your device's time zone. Briefings send within 15 minutes of your chosen time.</p>
+              </>
+            )}
           </div>
         )}
 
@@ -285,10 +525,15 @@ const styles = {
   card: { background: "#fff", borderRadius: 16, padding: 32, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" },
   sectionTitle: { fontSize: 20, fontWeight: 700, color: "#1d1d1f", margin: "0 0 8px" },
   label: { display: "block", fontSize: 13, fontWeight: 600, color: "#1d1d1f", margin: "20px 0 6px" },
+  labelRow: { display: "flex", alignItems: "baseline", justifyContent: "space-between", margin: "20px 0 6px" },
+  autosaveHint: { fontSize: 12, color: "#1a8917", fontWeight: 600 },
   hint: { fontSize: 13, color: "#6e6e73", margin: "4px 0 0" },
   errorHint: { fontSize: 13, color: "#d70015", margin: "6px 0 0", fontWeight: 500 },
   textarea: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, lineHeight: 1.6, resize: "vertical", boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
   input: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f" },
+  select: { width: "100%", padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
+  timeRow: { display: "flex", gap: 10 },
+  selectInline: { flex: 1, padding: "12px", borderRadius: 8, border: "1px solid #d2d2d7", fontSize: 14, boxSizing: "border-box", fontFamily: "inherit", color: "#1d1d1f", background: "#fff" },
   saveBtn: { marginTop: 24, padding: "12px 28px", background: "#0066cc", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "pointer" },
   saveBtnDisabled: { marginTop: 24, padding: "12px 28px", background: "#a0b4c8", color: "#fff", border: "none", borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: "not-allowed" },
   divider: { border: "none", borderTop: "1px solid #f0f0f0", margin: "28px 0" },

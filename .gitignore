@@ -1,2 +1,5 @@
 .DS_Store
 n8n/
+.env
+node_modules/
+dist/
